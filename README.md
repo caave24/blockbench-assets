@@ -1,6 +1,7 @@
 **TODO:** Add brows-able gallery. 
 
 Concept:
+
 Build simple models, add sfx to them, create a 'sample catalog' of clips to use, for various visual metaphors, or connecting visual elements, or pieces that can be brought in as part of the UI of a video. 3D element floating, etc. 
 
 
