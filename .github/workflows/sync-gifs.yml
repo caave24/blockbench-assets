@@ -28,15 +28,12 @@ jobs:
 
           mkdir -p clips/mp4
 
-          find clips -maxdepth 1 -type f \
-            \( -iname "*.mp4" \) \
-            -print0 |
+          find clips -maxdepth 1 -type f -iname "*.mp4" -print0 |
           while IFS= read -r -d '' mp4; do
 
             filename="$(basename "$mp4")"
             base="${filename%.*}"
 
-            # Generate a unique GIF filename.
             while true; do
               suffix=$(python3 -c 'import secrets; print(secrets.token_hex(4))')
               gif="clips/${base}-${suffix}.gif"
@@ -57,8 +54,6 @@ jobs:
               -loop 0 \
               "$gif"
 
-            # Conversion succeeded, so move the source MP4
-            # into the processed MP4 archive.
             mv "$mp4" "clips/mp4/$filename"
 
             echo "Moved:"
@@ -79,7 +74,6 @@ jobs:
 
           html = index.read_text()
 
-          # Only GIFs directly inside clips/ are added.
           gifs = sorted(
               p for p in clips.iterdir()
               if p.is_file() and p.suffix.lower() == ".gif"
@@ -96,36 +90,31 @@ jobs:
                   f"clips/{filename}"
               )
 
-              # Don't add the same GIF twice.
               if raw_url in html:
                   continue
 
-              # Remove the random 8-character suffix from the
-              # generated filename when creating alt text.
               name = gif.stem
               name = re.sub(r"-[0-9a-fA-F]{8}$", "", name)
-
               name = re.sub(r"[-_]+", " ", name)
               name = re.sub(r"([a-z])([0-9]+)$", r"\1 \2", name)
               name = name.strip().title()
 
               additions.append(
                   f'''  <div class="Cell -6of12">
-      <div class="example">
-        <figure>
-          <img src="{raw_url}" alt="{name}">
-        </figure>
-      </div>
-    </div>
+              <div class="example">
+                <figure>
+                  <img src="{raw_url}" alt="{name}">
+                </figure>
+              </div>
+            </div>
 
-'''
+          '''
               )
 
           if not additions:
               print("No new GIFs to add.")
               raise SystemExit(0)
 
-          # Add new GIFs immediately after <body>.
           marker = "<body>"
 
           if marker not in html:
