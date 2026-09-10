@@ -13,37 +13,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout main repository
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Checkout blockbench-assets
-        uses: actions/checkout@v4
-        with:
-          repository: caave24/blockbench-assets
-          ref: main
-          path: blockbench-assets
-          token: ${{ secrets.BLOCKBENCH_ASSETS_TOKEN }}
 
       - name: Install FFmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
 
-      - name: Convert MP4 files to GIF
+      - name: Convert new MP4s to GIFs
         shell: bash
         run: |
           set -e
 
-          CLIPS="blockbench-assets/clips"
+          CLIPS="clips"
 
           find "$CLIPS" -type f -iname "*.mp4" -print0 | while IFS= read -r -d '' mp4; do
             gif="${mp4%.*}.gif"
 
+            # Never regenerate an existing GIF.
             if [ -f "$gif" ]; then
-              echo "GIF already exists: $gif"
+              echo "Already exists, skipping: $gif"
               continue
             fi
 
-            echo "Converting: $mp4"
-            echo "       -> $gif"
+            echo "Converting MP4:"
+            echo "  $mp4"
+            echo "  -> $gif"
 
             ffmpeg \
               -y \
@@ -53,24 +47,7 @@ jobs:
               "$gif"
           done
 
-      - name: Commit generated GIFs to blockbench-assets
-        working-directory: blockbench-assets
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add 'clips/*.gif'
-
-          if git diff --cached --quiet; then
-            echo "No new GIFs to commit."
-            exit 0
-          fi
-
-          git commit -m "Convert new MP4 clips to GIF"
-          git push
-
-      - name: Generate missing GIF HTML
+      - name: Update index.html
         shell: bash
         run: |
           python3 <<'PY'
@@ -78,7 +55,7 @@ jobs:
           import re
 
           index = Path("index.html")
-          clips = Path("blockbench-assets/clips")
+          clips = Path("clips")
 
           html = index.read_text()
 
@@ -98,17 +75,18 @@ jobs:
                   f"clips/{filename}"
               )
 
-              # Don't add an image that is already in index.html.
+              # Already present in index.html.
               if raw_url in html:
                   continue
 
-              # Turn filename into readable alt text.
+              # Convert filename into readable alt text.
               name = gif.stem
               name = re.sub(r"[-_]+", " ", name)
               name = re.sub(r"([a-z])([0-9]+)$", r"\1 \2", name)
               name = name.strip().title()
 
-              block = f'''    <div class="Cell -6of12">
+              additions.append(
+                  f'''    <div class="Cell -6of12">
       <div class="example">
         <figure>
           <img src="{raw_url}" alt="{name}">
@@ -116,44 +94,41 @@ jobs:
       </div>
     </div>
 '''
+              )
 
-              additions.append(block)
-
-          if additions:
-              text = html.rstrip()
-
-              # Insert before the final Grid closing div.
-              marker = "  </div>\n\n</body>"
-
-              if marker in text:
-                  text = text.replace(
-                      marker,
-                      "".join(additions) + "  </div>\n\n</body>",
-                      1
-                  )
-              else:
-                  raise SystemExit(
-                      "Could not find the closing .Grid structure in index.html"
-                  )
-
-              index.write_text(text + "\n")
-
-              print(f"Added {len(additions)} GIF(s) to index.html")
-          else:
+          if not additions:
               print("No new GIFs to add.")
+              raise SystemExit(0)
 
+          # Add new cells immediately before the closing .Grid div.
+          marker = "  </div>\n\n</body>"
+
+          if marker not in html:
+              raise SystemExit(
+                  "Could not find the closing .Grid structure in index.html"
+              )
+
+          html = html.replace(
+              marker,
+              "".join(additions) + marker,
+              1
+          )
+
+          index.write_text(html)
+
+          print(f"Added {len(additions)} GIF(s) to index.html")
           PY
 
-      - name: Commit updated index.html
+      - name: Commit changes
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add index.html
+          git add clips/*.gif index.html
 
           if git diff --cached --quiet; then
-            echo "index.html is already up to date."
+            echo "Nothing to commit."
             exit 0
           fi
 
