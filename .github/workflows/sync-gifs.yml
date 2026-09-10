@@ -21,74 +21,51 @@ jobs:
       - name: Install FFmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
 
-      - name: Convert new MP4s to GIFs
+      - name: Convert MP4s and move originals
         shell: bash
         run: |
           set -e
 
-          python3 <<'PY'
-          import hashlib
-          import json
-          import secrets
-          import subprocess
-          from pathlib import Path
+          mkdir -p clips/mp4
 
-          clips = Path("clips")
-          state_file = Path(".mp4-conversions.json")
+          find clips -maxdepth 1 -type f \
+            \( -iname "*.mp4" \) \
+            -print0 |
+          while IFS= read -r -d '' mp4; do
 
-          if state_file.exists():
-              state = json.loads(state_file.read_text())
-          else:
-              state = {}
+            filename="$(basename "$mp4")"
+            base="${filename%.*}"
 
-          mp4_files = sorted(
-              p for p in clips.rglob("*")
-              if p.is_file() and p.suffix.lower() == ".mp4"
-          )
+            # Generate a unique GIF filename.
+            while true; do
+              suffix=$(python3 -c 'import secrets; print(secrets.token_hex(4))')
+              gif="clips/${base}-${suffix}.gif"
 
-          for mp4 in mp4_files:
-              # Hash the MP4 contents so the same MP4 is only converted once.
-              file_hash = hashlib.sha256(mp4.read_bytes()).hexdigest()
+              if [ ! -e "$gif" ]; then
+                break
+              fi
+            done
 
-              key = str(mp4)
+            echo "Converting:"
+            echo "  $mp4"
+            echo "  -> $gif"
 
-              if state.get(key) == file_hash:
-                  print(f"Already converted, skipping: {mp4}")
-                  continue
+            ffmpeg \
+              -y \
+              -i "$mp4" \
+              -vf "fps=15,scale='min(800,iw)':-1:flags=lanczos" \
+              -loop 0 \
+              "$gif"
 
-              # Create a unique random filename.
-              while True:
-                  suffix = secrets.token_hex(4)
-                  gif = mp4.with_name(f"{mp4.stem}-{suffix}.gif")
+            # Conversion succeeded, so move the source MP4
+            # into the processed MP4 archive.
+            mv "$mp4" "clips/mp4/$filename"
 
-                  if not gif.exists():
-                      break
+            echo "Moved:"
+            echo "  $mp4"
+            echo "  -> clips/mp4/$filename"
 
-              print(f"Converting:")
-              print(f"  {mp4}")
-              print(f"  -> {gif}")
-
-              subprocess.run(
-                  [
-                      "ffmpeg",
-                      "-y",
-                      "-i",
-                      str(mp4),
-                      "-vf",
-                      "fps=15,scale='min(800,iw)':-1:flags=lanczos",
-                      "-loop",
-                      "0",
-                      str(gif),
-                  ],
-                  check=True,
-              )
-
-              state[key] = file_hash
-
-          state_file.write_text(
-              json.dumps(state, indent=2, sort_keys=True) + "\n"
-          )
-          PY
+          done
 
       - name: Update index.html
         shell: bash
@@ -102,8 +79,9 @@ jobs:
 
           html = index.read_text()
 
+          # Only GIFs directly inside clips/ are added.
           gifs = sorted(
-              p for p in clips.rglob("*")
+              p for p in clips.iterdir()
               if p.is_file() and p.suffix.lower() == ".gif"
           )
 
@@ -112,24 +90,19 @@ jobs:
           for gif in gifs:
               filename = gif.name
 
-              # Only files directly inside clips/ are used for GitHub raw URLs.
-              if gif.parent != clips:
-                  continue
-
               raw_url = (
                   "https://raw.githubusercontent.com/"
                   "caave24/blockbench-assets/refs/heads/main/"
                   f"clips/{filename}"
               )
 
-              # Skip GIFs already present in index.html.
+              # Don't add the same GIF twice.
               if raw_url in html:
                   continue
 
-              # Create readable alt text from filename.
+              # Remove the random 8-character suffix from the
+              # generated filename when creating alt text.
               name = gif.stem
-
-              # Remove the random 8-character suffix from MP4-generated GIFs.
               name = re.sub(r"-[0-9a-fA-F]{8}$", "", name)
 
               name = re.sub(r"[-_]+", " ", name)
@@ -152,6 +125,7 @@ jobs:
               print("No new GIFs to add.")
               raise SystemExit(0)
 
+          # Add new GIFs immediately after <body>.
           marker = "<body>"
 
           if marker not in html:
@@ -174,12 +148,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add clips/*.gif index.html .mp4-conversions.json
+          git add clips index.html
 
           if git diff --cached --quiet; then
             echo "Nothing to commit."
             exit 0
           fi
 
-          git commit -m "Update GIF gallery"
+          git commit -m "Convert MP4s and update GIF gallery"
           git push
