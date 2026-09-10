@@ -3,8 +3,9 @@ name: Sync GIFs
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: "*/15 * * * *"
+  push:
+    paths:
+      - "clips/**"
 
 permissions:
   contents: write
