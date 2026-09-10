@@ -74,11 +74,12 @@ jobs:
 
           html = index.read_text()
 
-          # Find GIF filenames already referenced by an image
-          # inside clips/ anywhere in index.html.
+          # Find GIF filenames already referenced anywhere in index.html.
+          # This checks the filename itself rather than requiring an
+          # exact URL or exact HTML formatting.
           referenced_gifs = set(
               re.findall(
-                  r'<img\b[^>]*\bsrc=["\'][^"\']*/clips/([^/"\']+\.gif)["\']',
+                  r'/clips/([^/"\'\s>]+\.gif)',
                   html,
                   flags=re.IGNORECASE
               )
@@ -89,7 +90,8 @@ jobs:
           for filename in sorted(referenced_gifs):
               print(f"  {filename}")
 
-          # Only look at GIFs directly inside clips/.
+          # Only GIFs directly inside clips/ are candidates.
+          # clips/mp4/ is intentionally ignored.
           gifs = sorted(
               p for p in clips.iterdir()
               if p.is_file() and p.suffix.lower() == ".gif"
@@ -100,7 +102,8 @@ jobs:
           for gif in gifs:
               filename = gif.name
 
-              # Check the filename, not the complete URL.
+              # Don't add a GIF if its filename already appears
+              # in a /clips/...gif reference in index.html.
               if filename in referenced_gifs:
                   print(f"Already in HTML: {filename}")
                   continue
@@ -111,7 +114,7 @@ jobs:
                   f"clips/{filename}"
               )
 
-              # Create the complete gallery block.
+              # Complete gallery block.
               block = f'''  <div class="Cell -6of12">
                               <div class="example">
                                 <figure>
@@ -119,6 +122,7 @@ jobs:
                                 </figure>
                               </div>
                             </div>
+                          
                           '''
 
               additions.append(block)
@@ -129,16 +133,28 @@ jobs:
               print("No new GIFs need to be added.")
               raise SystemExit(0)
 
-          marker = "<body>"
+          # Accept:
+          #   <body>
+          #   <body class="Grid">
+          #   <body class="anything">
+          #   <body ...>
+          #
+          # This prevents the script from breaking if body attributes change.
+          body_match = re.search(
+              r'<body\b[^>]*>',
+              html,
+              flags=re.IGNORECASE
+          )
 
-          if marker not in html:
-              raise SystemExit("Could not find <body> in index.html")
+          if not body_match:
+              raise SystemExit("Could not find <body> element in index.html")
 
-          # Insert all new blocks immediately after <body>.
-          html = html.replace(
-              marker,
-              marker + "\n\n" + "".join(additions),
-              1
+          # Insert the new blocks immediately after the opening body tag.
+          html = (
+              html[:body_match.end()]
+              + "\n\n"
+              + "".join(additions)
+              + html[body_match.end():]
           )
 
           index.write_text(html)
