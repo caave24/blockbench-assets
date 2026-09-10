@@ -2,6 +2,7 @@ name: Sync GIFs
 
 on:
   workflow_dispatch:
+
   schedule:
     - cron: "*/15 * * * *"
 
@@ -24,28 +25,69 @@ jobs:
         run: |
           set -e
 
-          CLIPS="clips"
+          python3 <<'PY'
+          import hashlib
+          import json
+          import secrets
+          import subprocess
+          from pathlib import Path
 
-          find "$CLIPS" -type f -iname "*.mp4" -print0 | while IFS= read -r -d '' mp4; do
-            gif="${mp4%.*}.gif"
+          clips = Path("clips")
+          state_file = Path(".mp4-conversions.json")
 
-            # Never regenerate an existing GIF.
-            if [ -f "$gif" ]; then
-              echo "Already exists, skipping: $gif"
-              continue
-            fi
+          if state_file.exists():
+              state = json.loads(state_file.read_text())
+          else:
+              state = {}
 
-            echo "Converting MP4:"
-            echo "  $mp4"
-            echo "  -> $gif"
+          mp4_files = sorted(
+              p for p in clips.rglob("*")
+              if p.is_file() and p.suffix.lower() == ".mp4"
+          )
 
-            ffmpeg \
-              -y \
-              -i "$mp4" \
-              -vf "fps=15,scale='min(800,iw)':-1:flags=lanczos" \
-              -loop 0 \
-              "$gif"
-          done
+          for mp4 in mp4_files:
+              # Hash the MP4 contents so the same MP4 is only converted once.
+              file_hash = hashlib.sha256(mp4.read_bytes()).hexdigest()
+
+              key = str(mp4)
+
+              if state.get(key) == file_hash:
+                  print(f"Already converted, skipping: {mp4}")
+                  continue
+
+              # Create a unique random filename.
+              while True:
+                  suffix = secrets.token_hex(4)
+                  gif = mp4.with_name(f"{mp4.stem}-{suffix}.gif")
+
+                  if not gif.exists():
+                      break
+
+              print(f"Converting:")
+              print(f"  {mp4}")
+              print(f"  -> {gif}")
+
+              subprocess.run(
+                  [
+                      "ffmpeg",
+                      "-y",
+                      "-i",
+                      str(mp4),
+                      "-vf",
+                      "fps=15,scale='min(800,iw)':-1:flags=lanczos",
+                      "-loop",
+                      "0",
+                      str(gif),
+                  ],
+                  check=True,
+              )
+
+              state[key] = file_hash
+
+          state_file.write_text(
+              json.dumps(state, indent=2, sort_keys=True) + "\n"
+          )
+          PY
 
       - name: Update index.html
         shell: bash
@@ -69,30 +111,39 @@ jobs:
           for gif in gifs:
               filename = gif.name
 
+              # Only files directly inside clips/ are used for GitHub raw URLs.
+              if gif.parent != clips:
+                  continue
+
               raw_url = (
                   "https://raw.githubusercontent.com/"
                   "caave24/blockbench-assets/refs/heads/main/"
                   f"clips/{filename}"
               )
 
-              # Already present in index.html.
+              # Skip GIFs already present in index.html.
               if raw_url in html:
                   continue
 
-              # Convert filename into readable alt text.
+              # Create readable alt text from filename.
               name = gif.stem
+
+              # Remove the random 8-character suffix from MP4-generated GIFs.
+              name = re.sub(r"-[0-9a-fA-F]{8}$", "", name)
+
               name = re.sub(r"[-_]+", " ", name)
               name = re.sub(r"([a-z])([0-9]+)$", r"\1 \2", name)
               name = name.strip().title()
 
               additions.append(
-                  f'''    <div class="Cell -6of12">
+                  f'''  <div class="Cell -6of12">
       <div class="example">
         <figure>
           <img src="{raw_url}" alt="{name}">
         </figure>
       </div>
     </div>
+
 '''
               )
 
@@ -100,17 +151,14 @@ jobs:
               print("No new GIFs to add.")
               raise SystemExit(0)
 
-          # Add new cells immediately before the closing .Grid div.
-          marker = "  </div>\n\n</body>"
+          marker = "<body>"
 
           if marker not in html:
-              raise SystemExit(
-                  "Could not find the closing .Grid structure in index.html"
-              )
+              raise SystemExit("Could not find <body> in index.html")
 
           html = html.replace(
               marker,
-              "".join(additions) + marker,
+              marker + "\n\n" + "".join(additions),
               1
           )
 
@@ -125,7 +173,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add clips/*.gif index.html
+          git add clips/*.gif index.html .mp4-conversions.json
 
           if git diff --cached --quiet; then
             echo "Nothing to commit."
