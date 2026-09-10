@@ -74,6 +74,22 @@ jobs:
 
           html = index.read_text()
 
+          # Find GIF filenames already referenced by an image
+          # inside clips/ anywhere in index.html.
+          referenced_gifs = set(
+              re.findall(
+                  r'<img\b[^>]*\bsrc=["\'][^"\']*/clips/([^/"\']+\.gif)["\']',
+                  html,
+                  flags=re.IGNORECASE
+              )
+          )
+
+          print("GIFs already referenced in index.html:")
+
+          for filename in sorted(referenced_gifs):
+              print(f"  {filename}")
+
+          # Only look at GIFs directly inside clips/.
           gifs = sorted(
               p for p in clips.iterdir()
               if p.is_file() and p.suffix.lower() == ".gif"
@@ -84,35 +100,33 @@ jobs:
           for gif in gifs:
               filename = gif.name
 
+              # Check the filename, not the complete URL.
+              if filename in referenced_gifs:
+                  print(f"Already in HTML: {filename}")
+                  continue
+
               raw_url = (
                   "https://raw.githubusercontent.com/"
                   "caave24/blockbench-assets/refs/heads/main/"
                   f"clips/{filename}"
               )
 
-              if raw_url in html:
-                  continue
+              # Create the complete gallery block.
+              block = f'''  <div class="Cell -6of12">
+                              <div class="example">
+                                <figure>
+                                  <img src="{raw_url}" alt="{filename}">
+                                </figure>
+                              </div>
+                            </div>
+                          '''
 
-              name = gif.stem
-              name = re.sub(r"-[0-9a-fA-F]{8}$", "", name)
-              name = re.sub(r"[-_]+", " ", name)
-              name = re.sub(r"([a-z])([0-9]+)$", r"\1 \2", name)
-              name = name.strip().title()
+              additions.append(block)
 
-              additions.append(
-                  f'''  <div class="Cell -6of12">
-              <div class="example">
-                <figure>
-                  <img src="{raw_url}" alt="{name}">
-                </figure>
-              </div>
-            </div>
-
-          '''
-              )
+              print(f"Adding to HTML: {filename}")
 
           if not additions:
-              print("No new GIFs to add.")
+              print("No new GIFs need to be added.")
               raise SystemExit(0)
 
           marker = "<body>"
@@ -120,6 +134,7 @@ jobs:
           if marker not in html:
               raise SystemExit("Could not find <body> in index.html")
 
+          # Insert all new blocks immediately after <body>.
           html = html.replace(
               marker,
               marker + "\n\n" + "".join(additions),
@@ -128,7 +143,7 @@ jobs:
 
           index.write_text(html)
 
-          print(f"Added {len(additions)} GIF(s) to index.html")
+          print(f"Added {len(additions)} GIF block(s) to index.html")
           PY
 
       - name: Commit changes
