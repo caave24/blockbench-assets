@@ -121,8 +121,7 @@ jobs:
                                   <img src="{raw_url}" alt="{filename}">
                                 </figure>
                               </div>
-                            </div>
-                          
+                            </div>                          
                           '''
 
               additions.append(block)
